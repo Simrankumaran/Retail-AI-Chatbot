@@ -13,3 +13,5 @@ wheels/
 db/retail.db
 __pycache__/
 
+# MLflow
+mlruns/
