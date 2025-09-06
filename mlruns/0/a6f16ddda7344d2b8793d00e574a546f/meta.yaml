@@ -1,0 +1,14 @@
+artifact_uri: mlflow-artifacts:/0/a6f16ddda7344d2b8793d00e574a546f/artifacts
+end_time: null
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: a6f16ddda7344d2b8793d00e574a546f
+run_name: chat-2025-09-06T19:35:33.498803
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1757167533597
+status: 1
+tags: []
+user_id: novo

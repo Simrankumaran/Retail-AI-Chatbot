@@ -1,0 +1,14 @@
+artifact_uri: mlflow-artifacts:/0/4022f53c38474a51bf3bc564df68dd74/artifacts
+end_time: null
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 4022f53c38474a51bf3bc564df68dd74
+run_name: chat-2025-09-06T18:07:42.596485
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1757162263176
+status: 1
+tags: []
+user_id: INSIMUD1
