@@ -1,4 +1,3 @@
-
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -6,6 +5,8 @@ from app.llm import load_llm
 from app.tools.product import product_tool_list
 from app.tools.order import order_tool_list
 from app.tools.return_policy import return_policy_tool_list
+import json
+from langchain_core.messages import HumanMessage
 
 SYSTEM_PROMPT = (
     "You are a helpful retail assistant. Use tools exactly as follows:\n"
@@ -13,35 +14,43 @@ SYSTEM_PROMPT = (
     "- If the user asks about product details, availability, or price, use ProductSearchTool.\n"
     "- If the user asks about order status and provides an order ID, use OrderTrackingTool.\n"
     "- If the user asks about order status without an order ID but mentions a product name, use OrderTrackingByProductTool.\n"
-    "- If tools provide no relevant information, say you don't know rather than guessing.\n"
-    "Respond concisely and ground answers in tool results."
+    "- If the user asks about all recent orders, use AllOrdersTool.\n"
+    "- If the user asks about orders by status (pending, shipped, delivered, cancelled), use OrdersByStatusTool.\n"
+    "- If the user asks about orders by a specific user ID, use OrdersByUserTool.\n"
+    "\n"
+    "TOOLS RETURN STRUCTURED DATA:\n"
+    "- Each tool returns a dictionary with a boolean key 'found'.\n"
+    "- If 'found' is True, additional keys like 'order_id', 'orders', 'product_name', 'user_id', or 'status' contain the relevant information.\n"
+    "- If 'found' is False, keys like 'error', 'order_id', 'product_name', or 'user_id' indicate what was searched for.\n"
+    "\n"
+    "INSTRUCTIONS FOR RESPONDING:\n"
+    "- If 'found' is True, summarize the details in a clear, natural sentence for the user.\n"
+    "- If 'found' is False, inform the user politely that no matching order was found.\n"
+    "  Example: 'You didn't order this item, so I cannot show its status.'\n"
+    "- Always base your response on the tool output; do not guess.\n"
+    "- Respond concisely and naturally."
 )
+
 
 class GraphBuilder:
     def __init__(self) -> None:
         self.llm = load_llm()
-        # Combine all exported tools, keeping single-tool names for backward compatibility
         self.tools = [
             *product_tool_list,
             *order_tool_list,
             *return_policy_tool_list,
         ]
-        # Use interrupt_after_tool=True so the agent stops after calling a tool
-        # and returns control to this wrapper instead of potentially re-entering
-        # the agent graph (which can cause recursion in langgraph).
         self.agent_node = create_react_agent(
-            model=self.llm, tools=self.tools, interrupt_after_tool=True
+            model=self.llm,
+            tools=self.tools,
+            interrupt_after_tool=False,  # allow multi-step reasoning
         )
-
         self.graph = None
 
     def agent_fn(self, state: MessagesState):
-        # Inject system prompt, then run the ReAct agent node
         messages = state.get("messages", [])
         input_messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
         result = self.agent_node.invoke({"messages": input_messages})
-        # Debug: print full result so developers can inspect roles and tool outputs
-        print("agent invoke result:", result)
         return {"messages": result.get("messages", [])}
 
     def build(self):
@@ -52,55 +61,151 @@ class GraphBuilder:
         self.graph = g.compile()
         return self.graph
 
+
 def get_agent():
     builder = GraphBuilder()
     graph = builder.build()
-    def run_agent(query: str) -> str:
-        # Fast path: if user asks directly for an order id, skip the agent graph
-        # to avoid recursion and return DB-backed status immediately.
-        import re
-        from app.utils.order_service import order_by_id
 
-        m = re.search(r"order\s+(\d{3,})", query, flags=re.IGNORECASE)
-        if m:
-            order_id = m.group(1)
-            return order_by_id(order_id)
-
-        result = graph.invoke({"messages": [HumanMessage(content=query)]})
-        msgs = result.get("messages", [])
-        # Collect tool outputs and assistant replies
-        tool_contents = []
-        assistant_contents = []
-        for m in msgs:
-            content = getattr(m, "content", None)
-            role = getattr(m, "role", None)
-            name = getattr(m, "name", None)
-            # Messages coming from tools often have a `name` or `tool_call_id`
-            if name or getattr(m, "tool_call_id", None):
-                if content:
-                    tool_contents.append(content)
-            if role == "assistant" and content:
-                assistant_contents.append(content)
-
-        # If the assistant returned a final message, prefer it unless it explicitly
-        # says it has no info but a tool provided an answer — in that case, return tool output.
-        if assistant_contents:
-            final = assistant_contents[-1]
-            lower = final.lower()
-            negative_phrases = ["don't have information", "no information", "don't know", "no details", "not found"]
-            if any(p in lower for p in negative_phrases) and tool_contents:
-                return tool_contents[-1]
-            return final
-
-        # If no assistant reply, but we have tool output, return the most relevant tool output
-        if tool_contents:
-            return tool_contents[-1]
-
-        # Last resort: return the last message with content
-        for m in reversed(msgs):
-            content = getattr(m, "content", None)
-            if content:
+    def extract_first_ai_message(msgs):
+        """Return the first non-empty AI/assistant message."""
+        for msg in msgs:
+            content = getattr(msg, "content", "")
+            if content.strip():
                 return content
+        return None
 
-        return "No answer."
+    def check_not_found(tool_output):
+        """
+        Recursively check tool output dictionaries/lists for any 'found: False'.
+        Handles nested structures like orders inside product search results.
+        """
+        if isinstance(tool_output, dict):
+            if not tool_output.get("found", True):
+                return True
+            for val in tool_output.values():
+                if isinstance(val, list):
+                    for item in val:
+                        if check_not_found(item):
+                            return True
+        elif isinstance(tool_output, list):
+            for item in tool_output:
+                if check_not_found(item):
+                    return True
+        return False
+
+    def run_agent(query: str) -> str:
+        try:
+            result = graph.invoke({"messages": [HumanMessage(content=query)]})
+            print("Agent raw result:", result)  # Debugging
+
+            msgs = result.get("messages", [])
+            if not msgs:
+                return "No answer."
+
+            tool_outputs = []
+
+            for msg in msgs:
+                # ToolMessage parsing
+                name = getattr(msg, "name", None)
+                content = getattr(msg, "content", "")
+                if name:
+                    try:
+                        parsed = json.loads(content)
+                        tool_outputs.append(parsed)
+                    except Exception:
+                        tool_outputs.append({"found": False, "raw": content})
+
+                # AIMessage tool_calls (sometimes results are here)
+                tool_calls = getattr(msg, "tool_calls", [])
+                for call in tool_calls:
+                    tool_msg_content = call.get("result", "{}")
+                    try:
+                        parsed_call = json.loads(tool_msg_content)
+                        tool_outputs.append(parsed_call)
+                    except Exception:
+                        tool_outputs.append({"found": False, "raw": tool_msg_content})
+
+            # Check all tool outputs for any 'found: False' recursively
+            for tool_output in tool_outputs:
+                if check_not_found(tool_output):
+                    return "You didn’t order this item, so I cannot provide its status."
+
+            # Fallback to last AI/assistant message
+            last_assistant_msg = extract_first_ai_message(msgs)
+            if last_assistant_msg:
+                return last_assistant_msg
+
+            return "No answer."
+
+        except Exception as e:
+            import traceback
+            print("Agent crashed:\n", traceback.format_exc())
+            return f"Agent error: {e}"
+
+    return run_agent
+
+    builder = GraphBuilder()
+    graph = builder.build()
+    
+    def extract_first_ai_message(msgs):
+        for msg in msgs:
+            content = getattr(msg, "content", "")
+            if content.strip():
+                return content
+        return None
+
+
+    def run_agent(query: str) -> str:
+        try:
+            result = graph.invoke({"messages": [HumanMessage(content=query)]})
+            print("Agent raw result:", result)  # Debugging
+
+            msgs = result.get("messages", [])
+            if not msgs:
+                return "No answer."
+
+            last_assistant_msg = None
+            tool_outputs = []
+
+            for msg in msgs:
+                # ToolMessage
+                name = getattr(msg, "name", None)
+                content = getattr(msg, "content", "")
+                if name:
+                    try:
+                        parsed = json.loads(content)
+                        tool_outputs.append(parsed)
+                    except Exception:
+                        tool_outputs.append({"found": False, "raw": content})
+
+                # AIMessage
+                role = getattr(msg, "role", None)
+                if role == "assistant" and content.strip():
+                    last_assistant_msg = content
+
+                # AIMessage with tool_calls
+                tool_calls = getattr(msg, "tool_calls", [])
+                for call in tool_calls:
+                    tool_msg_content = call.get("result", "{}")
+                    try:
+                        parsed_call = json.loads(tool_msg_content)
+                        tool_outputs.append(parsed_call)
+                    except Exception:
+                        tool_outputs.append({"found": False, "raw": tool_msg_content})
+
+            # Check tool outputs for "not found"
+            for tool_output in tool_outputs:
+                if isinstance(tool_output, dict) and not tool_output.get("found", True):
+                    return "You didn’t order this item, so I cannot provide its status."
+
+            # Return last assistant message if exists
+            last_assistant_msg = extract_first_ai_message(msgs)
+            if last_assistant_msg:
+                return last_assistant_msg
+
+        except Exception as e:
+            import traceback
+            print("Agent crashed:\n", traceback.format_exc())
+            return f"Agent error: {e}"
+
     return run_agent
