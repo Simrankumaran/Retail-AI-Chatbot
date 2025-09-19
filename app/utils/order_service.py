@@ -54,7 +54,7 @@ def get_product_return_policy(product_id: int, default_window: int = 7) -> Dict:
 
 def is_returnable(order_id: str, return_window_days: int = 7) -> bool:
     cur = get_cursor()
-    cur.execute("SELECT status, date, product_id FROM orders WHERE order_id = ?", (order_id.strip(),))
+    cur.execute("SELECT status, delivered_date, product_id FROM orders WHERE order_id = ?", (order_id.strip(),))
     row = cur.fetchone()
     if not row:
         return False
@@ -72,7 +72,7 @@ def is_returnable(order_id: str, return_window_days: int = 7) -> bool:
 def get_returnability_info(order_id: str, default_window: int = 7) -> Dict:
     """Return structured return eligibility info."""
     cur = get_cursor()
-    cur.execute("SELECT status, date, product_id FROM orders WHERE order_id = ?", (order_id.strip(),))
+    cur.execute("SELECT status, delivered_date, product_id FROM orders WHERE order_id = ?", (order_id.strip(),))
     row = cur.fetchone()
     if not row:
         return {"eligible": False, "days_since": None, "window": None}
@@ -97,7 +97,7 @@ def order_by_id(order_id: str) -> Dict:
     cur = get_cursor()
     cur.execute(
         """
-        SELECT o.status, p.name, o.date, o.user_id, p.id
+        SELECT o.status, p.name, o.delivered_date, o.user_id, p.id
         FROM orders o
         JOIN products p ON p.id = o.product_id
         WHERE o.order_id = ?
@@ -127,11 +127,11 @@ def orders_by_product_name(product_name: str, limit: int = 5) -> Dict:
     like = f"%{product_name.strip()}%"
     cur.execute(
         """
-        SELECT o.order_id, o.user_id, o.status, o.date, p.name
+        SELECT o.order_id, o.user_id, o.status, o.ordered_date, p.name
         FROM orders o
         JOIN products p ON p.id = o.product_id
         WHERE p.name LIKE ? COLLATE NOCASE
-        ORDER BY date(o.date) DESC
+        ORDER BY date(o.ordered_date) DESC
         LIMIT ?
         """,
         (like, limit)
@@ -150,10 +150,10 @@ def all_orders(limit: int = 20) -> Dict:
     cur = get_cursor()
     cur.execute(
         """
-        SELECT o.order_id, o.user_id, o.status, o.date, p.name
+        SELECT o.order_id, o.user_id, o.status, o.ordered_date, p.name
         FROM orders o
         JOIN products p ON p.id = o.product_id
-        ORDER BY date(o.date) DESC
+        ORDER BY date(o.ordered_date) DESC
         LIMIT ?
         """,
         (limit,)
@@ -169,11 +169,11 @@ def orders_by_user(user_id: str, limit: int = 20) -> Dict:
     cur = get_cursor()
     cur.execute(
         """
-        SELECT o.order_id, o.user_id, o.status, o.date, p.name
+        SELECT o.order_id, o.user_id, o.status, o.ordered_date, p.name
         FROM orders o
         JOIN products p ON p.id = o.product_id
         WHERE o.user_id = ?
-        ORDER BY date(o.date) DESC
+        ORDER BY date(o.ordered_date) DESC
         LIMIT ?
         """,
         (user_id.strip(), limit)
@@ -198,11 +198,11 @@ def orders_by_status(status_filter: str, limit: int = 20) -> Dict:
     statuses = synonyms.get(key, [key])
     placeholders = ",".join(["?" for _ in statuses])
     sql = f"""
-        SELECT o.order_id, o.user_id, o.status, o.date, p.name
+        SELECT o.order_id, o.user_id, o.status, o.ordered_date, p.name
         FROM orders o
         JOIN products p ON p.id = o.product_id
         WHERE LOWER(o.status) IN ({placeholders})
-        ORDER BY date(o.date) DESC
+        ORDER BY date(o.ordered_date) DESC
         LIMIT ?
     """
     cur.execute(sql, [s for s in statuses] + [limit])
@@ -217,11 +217,11 @@ def orders_returnable_by_user(user_id: str, return_window_days: int = 7, limit: 
     cur = get_cursor()
     cur.execute(
         """
-        SELECT o.order_id, o.status, o.date, p.name
+        SELECT o.order_id, o.status, o.delivered_date, p.name
         FROM orders o
         JOIN products p ON p.id = o.product_id
         WHERE o.user_id = ?
-        ORDER BY date(o.date) DESC
+        ORDER BY date(o.delivered_date) DESC
         LIMIT ?
         """,
         (user_id.strip(), limit)
@@ -241,4 +241,141 @@ def orders_returnable_by_user(user_id: str, return_window_days: int = 7, limit: 
         "found": bool(returnable_orders),
         "user_id": user_id,
         "orders": returnable_orders
+    }
+
+# ---------- Order cancellation functions ----------
+
+def can_cancel_order(order_id: str) -> Dict:
+    """Check if an order can be cancelled based on its current status (only processing orders allowed)."""
+    cur = get_cursor()
+    cur.execute("SELECT status, ordered_date FROM orders WHERE order_id = ?", (order_id.strip(),))
+    row = cur.fetchone()
+    
+    if not row:
+        return {"can_cancel": False, "reason": "Order not found", "order_id": order_id}
+    
+    status, ordered_date = row
+    status_lower = status.lower()
+    
+    # Define cancellation rules - only processing orders can be cancelled
+    if status_lower == "processing":
+        return {"can_cancel": True, "reason": "Order can be cancelled", "order_id": order_id, "status": status}
+    elif status_lower == "delivered":
+        return {"can_cancel": False, "reason": "Delivered orders cannot be cancelled", "order_id": order_id, "status": status}
+    elif status_lower in ["cancelled", "canceled"]:
+        return {"can_cancel": False, "reason": "Order already cancelled", "order_id": order_id, "status": status}
+    elif status_lower in ["pending", "shipped"]:
+        return {"can_cancel": False, "reason": f"Orders with status '{status}' cannot be cancelled", "order_id": order_id, "status": status}
+    else:
+        return {"can_cancel": False, "reason": f"Cannot cancel order with status: {status}", "order_id": order_id, "status": status}
+
+def cancel_order(order_id: str, reason: str = "Customer request") -> Dict:
+    """Cancel an order by updating its status to cancelled."""
+    cur = get_cursor()
+    conn = cur.connection
+    
+    # First check if cancellation is allowed
+    can_cancel = can_cancel_order(order_id)
+    if not can_cancel.get("can_cancel", False):
+        return {
+            "success": False, 
+            "order_id": order_id,
+            "error": can_cancel.get("reason", "Cancellation not allowed"),
+            "current_status": can_cancel.get("status")
+        }
+    
+    try:
+        # Get current order details for logging
+        cur.execute(
+            "SELECT o.status, p.name FROM orders o JOIN products p ON o.product_id = p.id WHERE o.order_id = ?", 
+            (order_id.strip(),)
+        )
+        order_details = cur.fetchone()
+        
+        if not order_details:
+            return {"success": False, "order_id": order_id, "error": "Order not found"}
+        
+        current_status, product_name = order_details
+        
+        # Update order status to cancelled
+        cur.execute(
+            "UPDATE orders SET status = 'cancelled' WHERE order_id = ?", 
+            (order_id.strip(),)
+        )
+        
+        if cur.rowcount == 0:
+            return {"success": False, "order_id": order_id, "error": "Failed to update order status"}
+        
+        conn.commit()
+        
+        return {
+            "success": True,
+            "order_id": order_id,
+            "product_name": product_name,
+            "previous_status": current_status,
+            "new_status": "cancelled",
+            "cancellation_reason": reason,
+            "message": f"Order {order_id} for {product_name} has been successfully cancelled"
+        }
+        
+    except Exception as e:
+        conn.rollback()
+        return {
+            "success": False,
+            "order_id": order_id,
+            "error": f"Database error: {str(e)}"
+        }
+
+def get_cancellable_orders(user_id: str = None, limit: int = 20) -> Dict:
+    """Get orders that can be cancelled (processing status only)."""
+    cur = get_cursor()
+    
+    # Build query based on whether user_id is provided - only processing orders
+    if user_id:
+        sql = """
+            SELECT o.order_id, o.user_id, o.status, o.ordered_date, p.name
+            FROM orders o
+            JOIN products p ON p.id = o.product_id
+            WHERE o.user_id = ? AND LOWER(o.status) = 'processing'
+            ORDER BY date(o.ordered_date) DESC
+            LIMIT ?
+        """
+        params = (user_id.strip(), limit)
+    else:
+        sql = """
+            SELECT o.order_id, o.user_id, o.status, o.ordered_date, p.name
+            FROM orders o
+            JOIN products p ON p.id = o.product_id
+            WHERE LOWER(o.status) = 'processing'
+            ORDER BY date(o.ordered_date) DESC
+            LIMIT ?
+        """
+        params = (limit,)
+    
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    
+    # All processing orders are cancellable
+    cancellable_orders = []
+    now = datetime.now(timezone.utc)
+    
+    for oid, uid, st, dt, pname in rows:
+        order_dt = parse_date(dt)
+        days_since_order = (now - order_dt).days if order_dt else None
+        
+        cancellable_orders.append({
+            "order_id": oid, 
+            "user_id": uid, 
+            "status": st, 
+            "date": dt, 
+            "product_name": pname,
+            "can_cancel": True,
+            "days_since_order": days_since_order
+        })
+    
+    return {
+        "found": bool(cancellable_orders),
+        "user_id": user_id,
+        "cancellable_orders": cancellable_orders,
+        "count": len(cancellable_orders)
     }

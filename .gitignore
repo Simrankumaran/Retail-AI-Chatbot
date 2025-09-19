@@ -15,3 +15,5 @@ __pycache__/
 
 # MLflow
 mlruns/
+
+rag_db/chroma.sqlite3
