@@ -1,78 +1,95 @@
-# Agentic Retail Chatbot
+# Retail AI Chatbot
 
-A small FastAPI + LangGraph backend with Streamlit front-ends for a retail assistant. It answers product, order, and return policy questions using:
+A small retail assistant that combines a FastAPI backend with Streamlit front-ends. The app answers questions about products, orders, and return policies and can also perform actions such as cancelling orders. It uses an SQLite product/order database together with a RAG (Chroma) index for policy text and an LLM for responses.
 
-- SQLite (products, orders)
-- ChromaDB RAG (return policy docs)
-- Groq LLM (via `langchain-groq`)
+![Architecture diagram](Architecture.png)
 
 ## Prerequisites
 
 - Python 3.11
-- A Groq API key (get one from console.groq.com)
+- pip
+- (Optional) a virtual environment tool such as `venv` or `virtualenv`
+- If using the Groq LLM integration: a valid `GROQ_API_KEY` environment variable
 
-## Quick start (Windows PowerShell)
+## Setup (Linux)
 
-1. Clone and enter the project directory, then create/activate a virtualenv:
+1. Create and activate a virtualenv:
 
-```powershell
+```bash
 python -m venv .venv
-."\.venv\Scripts\Activate.ps1"
+source .venv/bin/activate
 ```
 
 2. Install dependencies:
 
-```powershell
+```bash
 pip install -r requirements.txt
 ```
 
-3. Configure environment variables (create a `.env` or set in the shell). Minimal required:
+3. Set required environment variables (example):
 
-```powershell
-# Set for current session
-$env:GROQ_API_KEY = "<your_groq_api_key>"
-
-# Optional overrides (defaults shown)
-# $env:DB_PATH = "db/retail.db"
-# $env:RAG_DIR = "rag_db"
-# $env:EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+```bash
+export GROQ_API_KEY="<your_groq_api_key>"
+# Optional overrides
+export DB_PATH="db/retail.db"
+export RAG_DIR="rag_db"
 ```
 
-4. Initialize data (only if you need to regenerate):
+4. (Optional) Recreate data stores if you need to rebuild from CSV/text inputs:
 
-```powershell
-# SQLite (creates db/retail.db from data/*.csv)
+```bash
+# Recreates SQLite DB from data/*.csv
 python app/setup/init_sqlite.py
 
-# RAG (embeds data/return_policy.txt into rag_db/)
+# Builds the RAG index from data/return_policy.txt
 python app/setup/init_rag.py
 ```
 
-Note: This repository already includes `db/retail.db` and `rag_db/`. You can skip step 4 unless you want to rebuild.
+Note: This repo commits `db/retail.db` and a `rag_db/` folder — you can skip step 4 unless you want to rebuild.
 
-5. Run the backend API (FastAPI on http://127.0.0.1:8000):
+## Running the project
 
-```powershell
+1. Start the backend API (FastAPI). By default it serves on http://127.0.0.1:8000
+
+```bash
 python app/main.py
 ```
 
 Health check: visit http://127.0.0.1:8000/health
 
-6. In a new terminal, run the Streamlit chat UI:
+2. Run the Streamlit chat UI in a new terminal:
 
-```powershell
-."\.venv\Scripts\Activate.ps1"; streamlit run .\streamlit_chat.py
+```bash
+source .venv/bin/activate
+streamlit run streamlit_chat.py
 ```
 
-7. (Optional) In another terminal, run the metrics dashboard:
+3. (Optional) Run the metrics dashboard:
 
-```powershell
-."\.venv\Scripts\Activate.ps1"; streamlit run .\streamlit_dashboard.py
+```bash
+source .venv/bin/activate
+streamlit run streamlit_dashboard.py
 ```
+
+## Files of interest
+
+- `app/main.py` — starts the FastAPI backend
+- `app/api.py` — request handlers and endpoints
+- `app/agent.py` — orchestrates tools and LLM calls
+- `app/llm.py` — LLM wrapper / model integrations
+- `streamlit_chat.py` — Streamlit chat UI
+- `streamlit_dashboard.py` — Streamlit metrics viewer
+- `data/` — source CSVs and `return_policy.txt`
+- `db/retail.db` — prebuilt SQLite database used by the app
+- `rag_db/` — RAG embeddings & vectors
+
+## Development notes
+
+- Environment variables are read from the process environment. You can use a `.env` loader in development if preferred.
+- If the LLM integration fails with 500s, verify `GROQ_API_KEY` and network connectivity.
 
 ## Troubleshooting
 
-- Missing DB: Run `python app/setup/init_sqlite.py`.
-- Missing RAG vectors: Run `python app/setup/init_rag.py` (requires internet to download the embedding model on first run).
-- 500 errors from `/chat`: Ensure `$env:GROQ_API_KEY` is set and valid.
-- Port in use: Change FastAPI port in `app/main.py` or run Streamlit with `--server.port`.
+- Missing DB or stale data: run `python app/setup/init_sqlite.py`.
+- Missing RAG vectors: run `python app/setup/init_rag.py` (the embedding model may download on first run).
+- Backend errors: check console logs where `app/main.py` runs and confirm the API health endpoint.
