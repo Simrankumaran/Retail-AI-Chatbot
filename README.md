@@ -52,7 +52,7 @@ Note: This repo commits `db/retail.db` and a `rag_db/` folder — you can skip s
 1. Start the backend API (FastAPI). By default it serves on http://127.0.0.1:8000
 
 ```bash
-python app/main.py
+uvicorn app.api:app --reload
 ```
 
 Health check: visit http://127.0.0.1:8000/health
