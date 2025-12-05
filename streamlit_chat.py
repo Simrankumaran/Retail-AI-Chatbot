@@ -1,6 +1,7 @@
 import os
 import requests
 import streamlit as st
+from app.ui.speech_utils import record_audio, transcribe_audio
 
 st.set_page_config(page_title="Retail Chatbot", layout="centered")
 st.title("🛍️ Retail Assistant Chatbot")
@@ -23,6 +24,34 @@ with cols[1]:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+
+st.subheader("🎙️ Voice Input")
+audio_bytes = record_audio(key="voice_input") # Explicit key
+if audio_bytes:
+    text = transcribe_audio(audio_bytes)
+    if text:
+        st.write(f"**You said:** {text}")
+        
+        # Append user message
+        st.session_state.messages.append({"role": "user", "content": text})
+        
+        # Call backend (reusing logic)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    resp = requests.post(f"{API_URL}/chat", json={"query": text}, timeout=60)
+                    if resp.ok:
+                        answer = resp.json().get("response", "")
+                        st.session_state.messages.append({"role": "assistant", "content": answer})
+                        st.markdown(answer)
+                    else:
+                        err = f"Backend error ({resp.status_code})."
+                        st.session_state.messages.append({"role": "assistant", "content": err})
+                        st.error(err)
+                except Exception as e:
+                    err = f"Request failed: {e}"
+                    st.session_state.messages.append({"role": "assistant", "content": err})
+                    st.error(err)
 
 # Chat input
 if prompt := st.chat_input("Type your question..."):
