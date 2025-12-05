@@ -17,3 +17,4 @@ __pycache__/
 mlruns/
 
 rag_db/
+rag_db/chroma.sqlite3

@@ -13,10 +13,18 @@ API_URL = os.getenv("RETAIL_API_URL", "http://127.0.0.1:8000")
 if "messages" not in st.session_state:
     st.session_state.messages = []  # each: {"role": "user"|"assistant", "content": str}
 
+# Initialize state
+if "voice_key_id" not in st.session_state:
+    st.session_state.voice_key_id = 0
+if "last_voice_input" not in st.session_state:
+    st.session_state.last_voice_input = None
+
 cols = st.columns([1, 1, 3])
 with cols[0]:
     if st.button("Clear chat"):
         st.session_state.messages = []
+        st.session_state.voice_key_id += 1 # Reset voice widget
+        st.session_state.last_voice_input = None
 with cols[1]:
     st.write("")
 
@@ -26,8 +34,11 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 st.subheader("🎙️ Voice Input")
-audio_bytes = record_audio(key="voice_input") # Explicit key
-if audio_bytes:
+# Use dynamic key to allow resetting
+audio_bytes = record_audio(key=f"voice_input_{st.session_state.voice_key_id}")
+
+if audio_bytes and audio_bytes != st.session_state.last_voice_input:
+    st.session_state.last_voice_input = audio_bytes
     text = transcribe_audio(audio_bytes)
     if text:
         st.write(f"**You said:** {text}")
