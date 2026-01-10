@@ -63,6 +63,10 @@ if audio_bytes and audio_bytes != st.session_state.last_voice_input:
                     err = f"Request failed: {e}"
                     st.session_state.messages.append({"role": "assistant", "content": err})
                     st.error(err)
+        
+        # Reset voice widget logic
+        st.session_state.voice_key_id += 1
+        st.rerun()
 
 # Chat input
 if prompt := st.chat_input("Type your question..."):

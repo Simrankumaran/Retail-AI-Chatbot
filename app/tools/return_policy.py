@@ -1,4 +1,20 @@
 import os
+import requests
+import warnings
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+# Suppress only the single warning from urllib3 needed.
+warnings.simplefilter('ignore', InsecureRequestWarning)
+
+# Monkeypatch Session.request to force verify=False
+original_request = requests.Session.request
+
+def patched_request(self, method, url, *args, **kwargs):
+    kwargs['verify'] = False
+    return original_request(self, method, url, *args, **kwargs)
+
+requests.Session.request = patched_request
+
 from langchain.tools import tool
 
 import chromadb
