@@ -11,7 +11,18 @@ class ChatResponse(BaseModel):
     response: str
 
 # === Create agent on startup ===
-app = FastAPI(title="Agentic Retail Chatbot")
+# === Create agent on startup ===
+from contextlib import asynccontextmanager
+from app.utils.db import init_db_schema
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Retrieve the agent instance or perform setup
+    init_db_schema()
+    yield
+    # Cleanup if needed
+
+app = FastAPI(title="Agentic Retail Chatbot", lifespan=lifespan)
 agent = get_agent()
 
 # === POST /chat ===

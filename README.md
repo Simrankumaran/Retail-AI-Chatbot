@@ -11,6 +11,10 @@ A small retail assistant that combines a FastAPI backend with Streamlit front-en
 - (Optional) a virtual environment tool such as `venv` or `virtualenv`
 - If using the Groq LLM integration: a valid `GROQ_API_KEY` environment variable
 
+## Setup (Windows)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
 ## Setup (Linux)
 
 1. Create and activate a virtualenv:

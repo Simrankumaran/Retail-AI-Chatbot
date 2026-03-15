@@ -26,19 +26,7 @@ def get_product_return_policy(product_id: int, default_window: int = 7) -> Dict:
     cols = [r[1] for r in cur.fetchall()]
     conn = cur.connection
 
-    # Add missing columns if necessary
-    if "is_returnable" not in cols:
-        try:
-            cur.execute("ALTER TABLE products ADD COLUMN is_returnable INTEGER DEFAULT 1")
-            conn.commit()
-        except Exception:
-            pass
-    if "return_window_days" not in cols:
-        try:
-            cur.execute("ALTER TABLE products ADD COLUMN return_window_days INTEGER DEFAULT 7")
-            conn.commit()
-        except Exception:
-            pass
+    # Schema checks moved to app/utils/db.py:init_db_schema()
 
     cur.execute(
         "SELECT is_returnable, return_window_days FROM products WHERE id = ?", (product_id,)
