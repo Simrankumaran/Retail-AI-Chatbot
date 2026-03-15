@@ -11,6 +11,9 @@ wheels/
 
 .env
 db/retail.db
+# SQLite temporary files
+*.db-shm
+*.db-wal
 __pycache__/
 
 # MLflow
