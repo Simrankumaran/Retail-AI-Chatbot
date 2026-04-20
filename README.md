@@ -61,7 +61,7 @@ uvicorn app.api:app --reload
 
 Health check: visit http://127.0.0.1:8000/health
 
-2. Run the Streamlit chat UI in a new terminal:
+2. Run the Streamlit chat UI in a new terminal: (inside the venv)
 
 ```bash
 source .venv/bin/activate

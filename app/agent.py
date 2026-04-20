@@ -56,7 +56,6 @@ class GraphBuilder:
         self.agent_node = create_react_agent(
             model=self.llm,
             tools=self.tools,
-            interrupt_after_tool=False,  # allow multi-step reasoning
         )
         self.graph = None
 
