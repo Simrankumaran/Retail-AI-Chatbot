@@ -18,13 +18,17 @@ if "voice_key_id" not in st.session_state:
     st.session_state.voice_key_id = 0
 if "last_voice_input" not in st.session_state:
     st.session_state.last_voice_input = None
+if "processing_audio" not in st.session_state:
+    st.session_state.processing_audio = False
 
 cols = st.columns([1, 1, 3])
 with cols[0]:
     if st.button("Clear chat"):
         st.session_state.messages = []
-        st.session_state.voice_key_id += 1 # Reset voice widget
+        st.session_state.voice_key_id += 1
         st.session_state.last_voice_input = None
+        st.session_state.processing_audio = False
+        st.rerun()
 with cols[1]:
     st.write("")
 
@@ -37,36 +41,52 @@ st.subheader("🎙️ Voice Input")
 # Use dynamic key to allow resetting
 audio_bytes = record_audio(key=f"voice_input_{st.session_state.voice_key_id}")
 
-if audio_bytes and audio_bytes != st.session_state.last_voice_input:
-    st.session_state.last_voice_input = audio_bytes
-    text = transcribe_audio(audio_bytes)
-    if text:
-        st.write(f"**You said:** {text}")
+# Process audio only if it's new and not already being processed
+if audio_bytes and not st.session_state.processing_audio:
+    # Create a hash of audio bytes to detect actual changes
+    import hashlib
+    audio_hash = hashlib.md5(audio_bytes).hexdigest()
+    
+    if audio_hash != st.session_state.last_voice_input:
+        st.session_state.processing_audio = True
+        st.session_state.last_voice_input = audio_hash
         
-        # Append user message
-        st.session_state.messages.append({"role": "user", "content": text})
-        
-        # Call backend (reusing logic)
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    resp = requests.post(f"{API_URL}/chat", json={"query": text}, timeout=60)
-                    if resp.ok:
-                        answer = resp.json().get("response", "")
-                        st.session_state.messages.append({"role": "assistant", "content": answer})
-                        st.markdown(answer)
-                    else:
-                        err = f"Backend error ({resp.status_code})."
+        text = transcribe_audio(audio_bytes)
+        if text and text.strip():
+            st.write(f"**You said:** {text}")
+            
+            # Append user message
+            st.session_state.messages.append({"role": "user", "content": text})
+            
+            # Call backend
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    try:
+                        # Use demo endpoint (no auth required, defaults to user 2001)
+                        resp = requests.post(
+                            f"{API_URL}/chat/demo",
+                            params={"query": text},
+                            timeout=60
+                        )
+                        if resp.ok:
+                            answer = resp.json().get("response", "")
+                            st.session_state.messages.append({"role": "assistant", "content": answer})
+                            st.markdown(answer)
+                        else:
+                            err = f"Backend error ({resp.status_code})."
+                            st.session_state.messages.append({"role": "assistant", "content": err})
+                            st.error(err)
+                    except Exception as e:
+                        err = f"Request failed: {e}"
                         st.session_state.messages.append({"role": "assistant", "content": err})
                         st.error(err)
-                except Exception as e:
-                    err = f"Request failed: {e}"
-                    st.session_state.messages.append({"role": "assistant", "content": err})
-                    st.error(err)
-        
-        # Reset voice widget logic
-        st.session_state.voice_key_id += 1
-        st.rerun()
+            
+            # Reset processing flag and increment key
+            st.session_state.processing_audio = False
+            st.session_state.voice_key_id += 1
+            st.rerun()
+        else:
+            st.session_state.processing_audio = False
 
 # Chat input
 if prompt := st.chat_input("Type your question..."):
@@ -79,7 +99,12 @@ if prompt := st.chat_input("Type your question..."):
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                resp = requests.post(f"{API_URL}/chat", json={"query": prompt}, timeout=60)
+                # Use demo endpoint (no auth required, defaults to user 2001)
+                resp = requests.post(
+                    f"{API_URL}/chat/demo",
+                    params={"query": prompt},
+                    timeout=60
+                )
                 if resp.ok:
                     answer = resp.json().get("response", "")
                     st.session_state.messages.append({"role": "assistant", "content": answer})
